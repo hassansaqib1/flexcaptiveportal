@@ -24,6 +24,25 @@ def list_wifi_adapters():
         print(f"[!] Error listing Wi-Fi adapters: {e}")
         return []
 
+# Function to kill wpa_supplicant process
+def kill_wpa_supplicant(adapter):
+    try:
+        print(f"[*] Checking for wpa_supplicant processes bound to {adapter}...")
+        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+        lines = [line for line in result.stdout.splitlines() if "wpa_supplicant" in line and adapter in line]
+        
+        if lines:
+            for line in lines:
+                pid = line.split()[1]  # Extract the PID (second column)
+                print(f"[!] Killing wpa_supplicant process with PID: {pid}")
+                subprocess.run(["kill", "-9", pid], check=True)
+            time.sleep(1)  # Allow time for the process to be terminated
+        else:
+            print("[*] No wpa_supplicant processes found for this adapter.")
+    except Exception as e:
+        print(f"[!] Error killing wpa_supplicant: {e}")
+        exit(1)
+
 # Function to scan for available Wi-Fi networks
 def scan_wifi(adapter):
     try:
@@ -62,7 +81,7 @@ def setup_rogue_ap(adapter, ssid):
 
         # Stop NetworkManager to avoid conflicts
         subprocess.run(["systemctl", "stop", "NetworkManager"], check=True)
-        subprocess.run(["airmon-ng", "check", "kill"], check=True)
+        kill_wpa_supplicant(adapter)  # Kill wpa_supplicant before proceeding
         subprocess.run(["hostapd", hostapd_config], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except subprocess.CalledProcessError as e:
         print(f"[!] Error setting up rogue access point: {e}")
